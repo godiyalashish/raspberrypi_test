@@ -42,3 +42,7 @@ sudo apt-get install -y docker-ce
 sudo docker run hello-world
 
 
+pip3 install https://github.com/PINTO0309/Tensorflow-bin/raw/master/tensorflow-2.6.0-cp38-none-linux_armv7l_download.tensorflow.org.whl
+
+
+
