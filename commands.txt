@@ -1,55 +1,13 @@
-I'd be glad to help you run the deepface Python repository on your Raspberry Pi Zero 2 W! Here's a comprehensive guide that incorporates insights from expert ratings and addresses potential issues:
-
-Prerequisites:
-
-Operating System: Ensure you have a compatible OS like Raspberry Pi OS (Bullseye or Buster) installed and updated.
-Python: Verify you have Python 3.5.5 or later installed (python3 --version). If not, follow the official Raspberry Pi documentation for installation.
-pip: Check if you have pip, the package installer (pip3 --version). If not, install it using sudo apt-get install python3-pip.
-Installation:
-
-Clone the repository:
-Bash
-----git clone https://github.com/serengil/deepface.git
-Use code with caution.
-Navigate to the cloned directory:
-Bash
-----cd deepface
-Use code with caution.
-Create a virtual environment (recommended): This isolates dependencies and avoids conflicts.
-Bash
----python3 -m venv venv
----source venv/bin/activate  # Activate the virtual environment
-Use code with caution.
-Install deepface and dependencies:
-Bash
----pip install -r requirements.txt
+sudo apt update 
+sudo apt insall python 3.8
+sudo apt install python3.8-venv
+python3.8 -m venv venv
+source venv/bin/activate
 
 
----------------------------------------------
-Use code with caution.
-Download pretrained models (optional): For optimal performance, it's beneficial to download pre-trained models. Consider using a computer with a better internet connection if your Pi's bandwidth is limited.
-Bash
-git clone https://github.com/serengil/deepface_models.git
-pip install --upgrade deepface
-Use code with caution.
-Running deepface:
-
-Open the Python interpreter:
-Bash
-python3
-Use code with caution.
-Import the deepface library:
-Python
-import deepface
-Use code with caution.
-Use deepface functions: Refer to the official documentation ([[invalid URL removed]]([invalid URL removed])) for available functions and examples.
-Specific Considerations for Raspberry Pi Zero 2 W:
-
-Limited RAM: Be mindful of memory usage, especially with larger images or videos. Adjust batch sizes or use smaller models if necessary.
-Slower CPU: Processing might be slower than on more powerful systems. Patience is key!
-Model weights: If you decide to download pretrained models directly to your Pi, be aware of potential bandwidth limitations.
-Additional Tips:
-
-Troubleshooting: If you encounter issues, provide more details about your setup, Python version, and error messages for tailored assistance.
-Alternative repositories: For lighter alternatives on resource-constrained devices, consider face_recognition or opencv-python.
-I hope this enhanced guide empowers you to successfully run deepface on your Raspberry Pi Zero 2 W!
+cd deepface
+apt-get update
+apt-get install ffmpeg libsm6 libxext6 -y
+pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host=files.pythonhosted.org -e .
+PYTHONUNBUFFERED=1
+gunicorn --workers=1 --timeout=3600 --bind=0.0.0.0:5000 app:create_app
