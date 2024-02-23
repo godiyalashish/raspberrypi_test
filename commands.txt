@@ -1,69 +1,11 @@
-sudo systemctl edit --full --force wpa_cli@wlan0.service
+curl "https://www.raspberryconnect.com/images/hsinstaller/Autohotspot-Setup.tar.xz" -o AutoHotspot-Setup.tar.xz
 
 
-Description=Wpa_cli to Automatically Create an Accesspoint if no Client Connection is Available
-After=wpa_supplicant@%i.service
-BindsTo=wpa_supplicant@%i.service
-
-[Service]
-ExecStart=/sbin/wpa_cli -i %I -a /usr/local/bin/autoAP.sh
-Restart=on-failure
-RestartSec=1
-
-[Install]
-WantedBy=multi-user.target
+tar -xvJf AutoHotspot-Setup.tar.xz
 
 
+cd Autohotspot
 
 
+sudo ./autohotspot-setup.sh
 
-udoedit /usr/local/bin/autoAP.sh
-
-#!/bin/bash
-device=wlan0
-
-configure_ap () {
-    if [ -e /etc/systemd/network/08-CLI.network ]; then
-        mv /etc/systemd/network/08-CLI.network /etc/systemd/network/08-CLI.network~
-        systemctl restart systemd-networkd
-    fi
-}
-
-configure_client () {
-    if [ -e /etc/systemd/network/08-CLI.network~ ] &&  wpa_cli -i$device status | grep -q "mode=station"; then
-        mv /etc/systemd/network/08-CLI.network~ /etc/systemd/network/08-CLI.network
-        systemctl restart systemd-networkd
-    fi
-}
-
-reconfigure_wpa_supplicant () {
-    sleep "$1"
-    if [ "$(wpa_cli -i $device all_sta)" = ""]; then
-            wpa_cli -i $device reconfigure
-    fi
-}
-
-case "$2" in
-
-    # Configure access point if one is created
-    AP-ENABLED)
-        configure_ap
-        reconfigure_wpa_supplicant 2m &
-        ;;
-
-    # Configure as client, if connected to some network
-    CONNECTED)
-        configure_client
-        ;;
-
-    # Reconfigure wpa_supplicant to search for your wifi again, 
-    # if nobody is connected to the ap
-    AP-STA-DISCONNECTED)
-        reconfigure_wpa_supplicant 20 &
-        ;;
-esac
-
-
-chmod +x /path/to/script/autoAP.sh
-
-sudo systemctl enable --now wpa_cli@wlan0.service
