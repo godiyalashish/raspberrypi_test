@@ -9,3 +9,8 @@ cd Autohotspot
 
 sudo ./autohotspot-setup.sh
 
+
+
+RPiHotspot
+1234567890
+192.168.50.5
