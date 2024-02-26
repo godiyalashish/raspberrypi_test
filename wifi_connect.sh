@@ -1,74 +1,193 @@
 #!/bin/bash
+#version 0.962-N/HS
 
-# Set network interface name (replace with your actual interface)
-INTERFACE="wlan0"
+#You may share this script on the condition all references to RaspberryConnect.com 
+#must be included in copies or derivatives of this script.  
 
-# Configure known Wi-Fi networks (replace with your SSIDs and passwords)
-KNOWN_NETWORKS=(
-    "SSID1:PASSWORD1"
-    "SSID2:PASSWORD2"
-)
+#A script to switch between a wifi network and a non internet routed Hotspot
+#Works at startup or with a seperate timer or manually without a reboot
+#Other setup required find out more at
+#http://www.raspberryconnect.com
 
-# Check for internet connection
-ping -c 1 8.8.8.8 > /dev/null 2>&1
-if [[ $? -eq 0 ]]; then
-    echo "Internet connection detected, exiting..."
-    exit 0
-fi
+wifidev="wlan0" #device name to use. Default is wlan0.
+#use the command: iw dev ,to see wifi interface name 
 
-# Try connecting to known Wi-Fi networks
-for network in "${KNOWN_NETWORKS[@]}"; do
-    ssid="${network%%:}"
-    password="${network##*:}"
+IFSdef=$IFS
+cnt=0
+#These four lines capture the wifi networks the RPi is setup to use
+wpassid=$(awk '/ssid="/{ print $0 }' /etc/wpa_supplicant/wpa_supplicant.conf | awk -F'ssid=' '{ print $2 }' | sed 's/\r//g'| awk 'BEGIN{ORS=","} {print}' | sed 's/\"/''/g' | sed 's/,$//')
+IFS=","
+ssids=($wpassid)
+IFS=$IFSdef #reset back to defaults
 
-    echo "Trying to connect to '$ssid'..."
-    sudo wpa_supplicant -B -i $INTERFACE -c /etc/wpa_supplicant/$INTERFACE.conf &
-    sleep 5
 
-    if [[ $(iwconfig $INTERFACE | grep ESSID | awk '{print $4}') == "$ssid" ]]; then
-        echo "Connected to '$ssid'"
-        exit 0
+#Note:If you only want to check for certain SSIDs
+#Remove the # in in front of ssids=('mySSID1'.... below and put a # infront of all four lines above
+# separated by a space, eg ('mySSID1' 'mySSID2')
+#ssids=('mySSID1' 'mySSID2' 'mySSID3')
+
+#Enter the Routers Mac Addresses for hidden SSIDs, seperated by spaces ie 
+#( '11:22:33:44:55:66' 'aa:bb:cc:dd:ee:ff' ) 
+mac=()
+
+ssidsmac=("${ssids[@]}" "${mac[@]}") #combines ssid and MAC for checking
+
+createAdHocNetwork()
+{
+    echo "Creating Hotspot"
+    ip link set dev "$wifidev" down
+    ip a add 10.0.0.5/24 brd + dev "$wifidev"
+    ip link set dev "$wifidev" up
+    dhcpcd -k "$wifidev" >/dev/null 2>&1
+    systemctl start dnsmasq
+    systemctl start hostapd
+}
+
+KillHotspot()
+{
+    echo "Shutting Down Hotspot"
+    ip link set dev "$wifidev" down
+    systemctl stop hostapd
+    systemctl stop dnsmasq
+    ip addr flush dev "$wifidev"
+    ip link set dev "$wifidev" up
+    dhcpcd  -n "$wifidev" >/dev/null 2>&1
+}
+
+ChkWifiUp()
+{
+	echo "Checking WiFi connection ok"
+        sleep 20 #give time for connection to be completed to router
+	if ! wpa_cli -i "$wifidev" status | grep 'ip_address' >/dev/null 2>&1
+        then #Failed to connect to wifi (check your wifi settings, password etc)
+	       echo 'Wifi failed to connect, falling back to Hotspot.'
+               wpa_cli terminate "$wifidev" >/dev/null 2>&1
+	       createAdHocNetwork
+	fi
+}
+
+
+chksys()
+{
+    #After some system updates hostapd gets masked using Raspbian Buster, and above. This checks and fixes  
+    #the issue and also checks dnsmasq is ok so the hotspot can be generated.
+    #Check Hostapd is unmasked and disabled
+    if systemctl -all list-unit-files hostapd.service | grep "hostapd.service masked" >/dev/null 2>&1 ;then
+	systemctl unmask hostapd.service >/dev/null 2>&1
     fi
+    if systemctl -all list-unit-files hostapd.service | grep "hostapd.service enabled" >/dev/null 2>&1 ;then
+	systemctl disable hostapd.service >/dev/null 2>&1
+	systemctl stop hostapd >/dev/null 2>&1
+    fi
+    #Check dnsmasq is disabled
+    if systemctl -all list-unit-files dnsmasq.service | grep "dnsmasq.service masked" >/dev/null 2>&1 ;then
+	systemctl unmask dnsmasq >/dev/null 2>&1
+    fi
+    if systemctl -all list-unit-files dnsmasq.service | grep "dnsmasq.service enabled" >/dev/null 2>&1 ;then
+	systemctl disable dnsmasq >/dev/null 2>&1
+	systemctl stop dnsmasq >/dev/null 2>&1
+    fi
+}
 
-    sudo killall wpa_supplicant
+
+FindSSID()
+{
+#Check to see what SSID's and MAC addresses are in range
+ssidChk=('NoSSid')
+i=0; j=0
+until [ $i -eq 1 ] #wait for wifi if busy, usb wifi is slower.
+do
+        ssidreply=$((iw dev "$wifidev" scan ap-force | egrep "^BSS|SSID:") 2>&1) >/dev/null 2>&1 
+        #echo "SSid's in range: " $ssidreply
+	printf '%s\n' "${ssidreply[@]}"
+        echo "Device Available Check try " $j
+        if (($j >= 10)); then #if busy 10 times goto hotspot
+                 echo "Device busy or unavailable 10 times, going to Hotspot"
+                 ssidreply=""
+                 i=1
+	elif echo "$ssidreply" | grep "No such device (-19)" >/dev/null 2>&1; then
+                echo "No Device Reported, try " $j
+		NoDevice
+        elif echo "$ssidreply" | grep "Network is down (-100)" >/dev/null 2>&1 ; then
+                echo "Network Not available, trying again" $j
+                j=$((j + 1))
+                sleep 2
+	elif echo "$ssidreply" | grep "Read-only file system (-30)" >/dev/null 2>&1 ; then
+		echo "Temporary Read only file system, trying again"
+		j=$((j + 1))
+		sleep 2
+	elif echo "$ssidreply" | grep "Invalid exchange (-52)" >/dev/null 2>&1 ; then
+		echo "Temporary unavailable, trying again"
+		j=$((j + 1))
+		sleep 2
+	elif echo "$ssidreply" | grep -v "resource busy (-16)"  >/dev/null 2>&1 ; then
+               echo "Device Available, checking SSid Results"
+		i=1
+	else #see if device not busy in 2 seconds
+                echo "Device unavailable checking again, try " $j
+		j=$((j + 1))
+		sleep 2
+	fi
 done
 
-# No known network found, start hotspot
-echo "No known network found, starting hotspot..."
-sudo systemctl start hostapd
-sudo systemctl start dnsmasq
+for ssid in "${ssidsmac[@]}"
+do
+     if (echo "$ssidreply" | grep -F -- "$ssid") >/dev/null 2>&1
+     then
+	      #Valid SSid found, passing to script
+              echo "Valid SSID Detected, assesing Wifi status"
+              ssidChk=$ssid
+              return 0
+      else
+	      #No Network found, NoSSid issued"
+              echo "No SSid found, assessing WiFi status"
+              ssidChk='NoSSid'
+     fi
+done
+}
 
-# Wait for user connection (replace with your preferred method)
-echo "Waiting for user to connect to hotspot..."
-# Option 1: Using a web server (refer to AutoHotspot documentation)
-# Option 2: Implementing a simple user interaction loop
+NoDevice()
+{
+	#if no wifi device,ie usb wifi removed, activate wifi so when it is
+	#reconnected wifi to a router will be available
+	echo "No wifi device connected"
+	wpa_supplicant -B -i "$wifidev" -c /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null 2>&1
+	exit 1
+}
 
-# Get SSID and password from user
-read -p "Enter SSID: " user_ssid
-read -p "Enter password: " user_password
+chksys
+FindSSID
 
-# Attempt to connect to user-provided network
-echo "Trying to connect to '$user_ssid'..."
-sudo wpa_supplicant -B -i $INTERFACE -c /etc/wpa_supplicant/$INTERFACE.conf &
-sleep 5
-
-if [[ $(iwconfig $INTERFACE | grep ESSID | awk '{print $4}') == "$user_ssid" ]]; then
-    echo "Connected to '$user_ssid'"
-
-    # Save user-provided credentials (optional)
-    # echo "user_ssid:$user_ssid" | sudo tee -a /etc/wpa_supplicant/$INTERFACE.conf
-    # echo "psk='$user_password'" | sudo tee -a /etc/wpa_supplicant/$INTERFACE.conf
-
-    # Stop hotspot and enable networking
-    sudo systemctl stop hostapd
-    sudo systemctl stop dnsmasq
-    sudo systemctl start networking
-
-    exit 0
-else
-    echo "Failed to connect to '$user_ssid'"
-    # Handle connection failure (e.g., retry, notify user)
+#Create Hotspot or connect to valid wifi networks
+if [ "$ssidChk" != "NoSSid" ] 
+then
+       if systemctl status hostapd | grep "(running)" >/dev/null 2>&1
+       then #hotspot running and ssid in range
+              KillHotspot
+              echo "Hotspot Deactivated, Bringing Wifi Up"
+              wpa_supplicant -B -i "$wifidev" -c /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null 2>&1
+              ChkWifiUp
+       elif { wpa_cli -i "$wifidev" status | grep 'ip_address'; } >/dev/null 2>&1
+       then #Already connected
+              echo "Wifi already connected to a network"
+       else #ssid exists and no hotspot running connect to wifi network
+              echo "Connecting to the WiFi Network"
+              wpa_supplicant -B -i "$wifidev" -c /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null 2>&1
+              ChkWifiUp
+       fi
+else #ssid or MAC address not in range
+       if systemctl status hostapd | grep "(running)" >/dev/null 2>&1
+       then
+              echo "Hostspot already active"
+       elif { wpa_cli status | grep "$wifidev"; } >/dev/null 2>&1
+       then
+              echo "Cleaning wifi files and Activating Hotspot"
+              wpa_cli terminate >/dev/null 2>&1
+              ip addr flush "$wifidev"
+              ip link set dev "$wifidev" down
+              rm -r /var/run/wpa_supplicant >/dev/null 2>&1
+              createAdHocNetwork
+       else #"No SSID, activating Hotspot"
+              createAdHocNetwork
+       fi
 fi
-
-# If all attempts fail, restart the script on next boot (optional)
-# sudo systemctl restart wifi_connect.sh
